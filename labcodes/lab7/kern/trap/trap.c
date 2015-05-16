@@ -42,7 +42,7 @@ static struct pseudodesc idt_pd = {
 /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
 void
 idt_init(void) {
-     /* LAB1 YOUR CODE : STEP 2 */
+     /* LAB1 2011012162 : STEP 2 */
      /* (1) Where are the entry addrs of each Interrupt Service Routine (ISR)?
       *     All ISR's entry addrs are stored in __vectors. where is uintptr_t __vectors[] ?
       *     __vectors[] is in kern/trap/vector.S which is produced by tools/vector.c
@@ -54,9 +54,17 @@ idt_init(void) {
       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
       *     Notice: the argument of lidt is idt_pd. try to find it!
       */
-     /* LAB5 YOUR CODE */ 
+     /* LAB5 2011012162 */ 
      //you should update your lab1 code (just add ONE or TWO lines of code), let user app to use syscall to get the service of ucore
      //so you should setup the syscall interrupt gate in here
+    extern uintptr_t __vectors[];
+    int i;
+    for (i = 0; i < sizeof(idt) / sizeof(struct gatedesc); i++)
+        SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
+    SETGATE(idt[T_SWITCH_TOK], 0, GD_KTEXT, __vectors[T_SWITCH_TOK], DPL_USER);
+    SETGATE(idt[T_SWITCH_TOK], 1, KERNEL_CS, __vectors[T_SWITCH_TOK], 3);
+    SETGATE(idt[T_SYSCALL], 1, GD_KTEXT, __vectors[T_SYSCALL], DPL_USER);
+    lidt(&idt_pd);
 }
 
 static const char *
@@ -144,6 +152,7 @@ print_regs(struct pushregs *regs) {
     cprintf("  ecx  0x%08x\n", regs->reg_ecx);
     cprintf("  eax  0x%08x\n", regs->reg_eax);
 }
+struct trapframe switchk2u, *switchu2k;
 
 static inline void
 print_pgfault(struct trapframe *tf) {
@@ -214,24 +223,28 @@ trap_dispatch(struct trapframe *tf) {
     LAB3 : If some page replacement algorithm(such as CLOCK PRA) need tick to change the priority of pages,
     then you can add code here. 
 #endif
-        /* LAB1 YOUR CODE : STEP 3 */
+        /* LAB1 2011012162 : STEP 3 */
         /* handle the timer interrupt */
         /* (1) After a timer interrupt, you should record this event using a global variable (increase it), such as ticks in kern/driver/clock.c
          * (2) Every TICK_NUM cycle, you can print some info using a funciton, such as print_ticks().
          * (3) Too Simple? Yes, I think so!
          */
-        /* LAB5 YOUR CODE */
+        /* LAB5 2011012162 */
         /* you should upate you lab1 code (just add ONE or TWO lines of code):
          *    Every TICK_NUM cycle, you should set current process's current->need_resched = 1
          */
-        /* LAB6 YOUR CODE */
-        /* IMPORTANT FUNCTIONS:
-	     * run_timer_list
-	     *----------------------
-	     * you should update your lab5 code (just add ONE or TWO lines of code):
-         *    Every tick, you should update the system time, iterate the timers, and trigger the timers which are end to call scheduler.
-         *    You can use one funcitons to finish all these things.
+        /* LAB6 2011012162 */
+        /* you should upate you lab5 code
+         * IMPORTANT FUNCTIONS:
+         * sched_class_proc_tick
          */
+        ticks ++;
+        // if (ticks % TICK_NUM == 0){
+        //     assert(current != NULL);
+        //     current->need_resched = 1;
+        // }
+        run_timer_list();
+        //sched_class_proc_tick(current);
         break;
     case IRQ_OFFSET + IRQ_COM1:
         c = cons_getc();
@@ -241,10 +254,26 @@ trap_dispatch(struct trapframe *tf) {
         c = cons_getc();
         cprintf("kbd [%03d] %c\n", c, c);
         break;
-    //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
-    case T_SWITCH_TOU:
+     //LAB1 CHALLENGE 1 : 2011012162 you should modify below codes.
+    case T_SWITCH_TOU:        
+        if (tf->tf_cs != USER_CS) {
+            switchk2u = *tf;
+            switchk2u.tf_cs = USER_CS;
+            switchk2u.tf_ds = switchk2u.tf_es = switchk2u.tf_ss = USER_DS;
+            switchk2u.tf_esp = (uint32_t)tf + sizeof(struct trapframe) - 8;
+            switchk2u.tf_eflags |= FL_IOPL_MASK;
+            *((uint32_t *)tf - 1) = (uint32_t)&switchk2u;
+        }
+        break;
     case T_SWITCH_TOK:
-        panic("T_SWITCH_** ??\n");
+        if (tf->tf_cs != KERNEL_CS) {
+            tf->tf_cs = KERNEL_CS;
+            tf->tf_ds = tf->tf_es = KERNEL_DS;
+            tf->tf_eflags &= ~FL_IOPL_MASK;
+            switchu2k = (struct trapframe *)(tf->tf_esp - (sizeof(struct trapframe) - 8));
+            memmove(switchu2k, tf, sizeof(struct trapframe) - 8);
+            *((uint32_t *)tf - 1) = (uint32_t)switchu2k;
+        }
         break;
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:
